@@ -57,9 +57,9 @@ int main()
             terminateMessagePrimary.mtype = 102;
             strcpy(terminateMessagePrimary.mtext, "Terminate");
             terminateMessageSecondary1.mtype = 103;
-            strcpy(terminateMessagePrimary.mtext, "Terminate");
+            strcpy(terminateMessageSecondary1.mtext, "Terminate");
             terminateMessageSecondary2.mtype = 108;
-            strcpy(terminateMessagePrimary.mtext, "Terminate");
+            strcpy(terminateMessageSecondary2.mtext, "Terminate");
             if (msgsnd(msqid, &terminateMessagePrimary, sizeof(terminateMessagePrimary.mtext), 0) == -1)
             {
                 perror("Error sending message");
@@ -83,7 +83,6 @@ int main()
         char seqNum[4];
         int opNum;
         char graphFileName[50];
-        printf("Hello");
 
         if (sscanf(receiveMessage.mtext, "%s %d %49s", seqNum, &opNum, graphFileName) != 3)
         {

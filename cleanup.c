@@ -21,7 +21,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    msqid = msgget(key, IPC_CREAT | 0666);
+    msqid = msgget(key, 0666);
     if (msqid == -1) {
         perror("Error creating/opening message queue");
         exit(EXIT_FAILURE);

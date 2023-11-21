@@ -6,9 +6,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <semaphore.h>
 
 #define buf 1000*sizeof(int)
-
+#define SHARED_MEM_NAME "shared_mem"
+#define SEM_NAME "named_sem"
 struct message {
     long mtype;
     char mtext[100];
@@ -18,14 +23,29 @@ typedef struct message message;
 int main() {
     key_t key;
     int msqid;
-
+    sem_t *sem;
+    int shm_fd = shm_open(SHARED_MEM_NAME, O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) {
+        perror("shm_open");
+        exit(EXIT_FAILURE);
+    }
+    ftruncate(shm_fd, sizeof(sem_t));
+    sem = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (sem == MAP_FAILED) {
+        perror("mmap");
+        exit(EXIT_FAILURE);
+    }
+    if (sem_init(sem, 1, 1) == -1) {
+        perror("sem_init");
+        exit(EXIT_FAILURE);
+    }
     key = ftok("load_balancer.c", 'A');
     if (key == -1) {
         perror("Error generating key");
         exit(EXIT_FAILURE);
     }
 
-    msqid = msgget(key, IPC_CREAT | 0666);
+    msqid = msgget(key, 0666);
     if (msqid == -1) {
         perror("Error creating/opening message queue");
         exit(EXIT_FAILURE);
@@ -61,6 +81,17 @@ int main() {
             printf("Enter number of nodes of the graph: ");
             scanf("%d", &numNodes);
             
+            int adjMatrix[numNodes][numNodes];
+            printf("Enter the adjacency matrix, each row on a separate line, and elements of a single row separated by whitespace characters:\n");
+            for (int i = 0; i < numNodes; i++) {
+                for (int j = 0; j < numNodes; j++) {
+                    scanf("%d", &adjMatrix[i][j]);
+                }
+            }
+            if (sem_wait(sem) == -1) {
+                perror("sem_wait");
+                exit(EXIT_FAILURE);
+            }
             int shmid = shmget(newkey, buf, IPC_CREAT | 0666);
             if(shmid == -1) {
                 perror("Error creating the shared memory");
@@ -69,16 +100,12 @@ int main() {
             int *shmptr = (int *)shmat(shmid,NULL,0);
             *shmptr = numNodes;
             shmptr++;
-            int adjMatrix[numNodes][numNodes];
-            printf("Enter the adjacency matrix, each row on a separate line, and elements of a single row separated by whitespace characters:\n");
             for (int i = 0; i < numNodes; i++) {
                 for (int j = 0; j < numNodes; j++) {
-                    scanf("%d", &adjMatrix[i][j]);
                     *shmptr=adjMatrix[i][j];
                     shmptr++;
                 }
             }
-            
             if (msgsnd(msqid, &sendMessage, sizeof(sendMessage.mtext), 0) == -1) {
             printf("Error in sending message to load balancer\n");
             exit(-1);
@@ -95,6 +122,10 @@ int main() {
             if (shmctl(shmid, IPC_RMID, NULL) == -1) 
             {
                 perror("Error removing shared memory segment");
+                exit(EXIT_FAILURE);
+            }
+            if (sem_post(sem) == -1) {
+                perror("sem_post");
                 exit(EXIT_FAILURE);
             }
         } 
@@ -127,7 +158,7 @@ int main() {
                 perror("Error receiving message from the primary server");
                 exit(EXIT_FAILURE);
             }
-            printf("%s",receiveSuccessMessage.mtext);
+            printf("%s\n",receiveSuccessMessage.mtext);
             shmdt(shmptr);
             if (shmctl(shmid, IPC_RMID, NULL) == -1) 
             {
@@ -135,5 +166,21 @@ int main() {
                 exit(EXIT_FAILURE);
             }
         }
+    }
+    if (sem_destroy(sem) == -1) {
+        perror("sem_destroy");
+        exit(EXIT_FAILURE);
+    }
+
+    // Unmap the shared memory
+    if (munmap(sem, sizeof(sem_t)) == -1) {
+        perror("munmap");
+        exit(EXIT_FAILURE);
+    }
+
+    // Close and unlink the shared memory only when the last instance is done
+    if (shm_unlink(SHARED_MEM_NAME) == -1) {
+        perror("shm_unlink");
+        exit(EXIT_FAILURE);
     }
 }

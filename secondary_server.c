@@ -21,21 +21,34 @@ typedef struct
     pthread_t tid;
 } ThreadInfo;
 
+#define MAX_SIZE 30
+
 char graphFileName[50];
 int maxNodes;
 int adjMatrix[30][30];
+int msqid;
+char sequenceNumber[4];
+int visited[30];
+int operation;
+int front = -1;
+int rear = -1;
+int queue[MAX_SIZE];
 
 
-void * DFS(void * fileName);
-void * DFS2(void * arg);
-void * BFS(void * fileName);
+void * DFS(void * arg);
+void * BFS(void * arg);
+void *populateMatrix(void *fileName);
+void enqueue(int data);
+void dequeue();
+int queuesize();
+void *threadfunc(void *arg);
 
 char result[60];
 
 int main()
 {
     key_t key;
-    int msqid;
+    
 
     key = ftok("load_balancer.c", 'A');
     if (key == -1)
@@ -44,7 +57,7 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    msqid = msgget(key, IPC_CREAT | 0666);
+    msqid = msgget(key, 0666);
     if (msqid == -1)
     {
         perror("Error creating/opening message queue");
@@ -69,60 +82,25 @@ int main()
                 printf("bye");
                 exit(0);
             }
-            int operation;
-            char sequenceNumber[4];
 
             if (sscanf(writeRecMessage.mtext, "%d %s %49s", &operation, sequenceNumber, graphFileName) != 3)
             {
                 fprintf(stderr, "Error parsing the received message\n");
                 exit(EXIT_FAILURE);
             }
-
-            printf("Received operation from load balancer: %d\n", operation);
-            printf("Received graph file name: %s\n", graphFileName);
-
-            while (1)
-            {
-                if (operation == 3)
-                {
-                    // DFS
-                    pthread_t tid;
-                    pthread_create(&tid, NULL, DFS, graphFileName);
-                    // sleep(100);
-                    pthread_join(tid, NULL);
-                    // pthread_t pid2;
-                    // pthread_create(&pid2, NULL, DFS2, &startVer);
-                    // pthread_join(pid2, NULL);
-                }
-                else if (operation == 4)
-                {
-                    // // BFS
-                    // pthread_t tid;
-                    // pthread_create(&tid, NULL, BFS, graphFileName);
-                    // pthread_join(tid, NULL);
-                }
-                else
-                {
-                    printf("Invalid operation number\n");
-                }
-                message writeMessage;
-                writeMessage.mtype = atoi(sequenceNumber) + 1000;
-                strcpy(writeMessage.mtext, result);
-                if (msgsnd(msqid, &writeMessage, sizeof(writeMessage.mtext), 0) == -1)
-                {
-                    perror("Error sending message to the client");
-                    exit(EXIT_FAILURE);
-                }
-                break;
-            }
+            pthread_t tid;
+            pthread_create(&tid, NULL, populateMatrix, graphFileName);
+            pthread_join(tid, NULL);
         }
 
         return 0;
     }
-      
 
-void *DFS(void *fileName)
-{
+void *populateMatrix(void *fileName)
+{   
+    for(int i = 0;i<30;i++){
+        visited[i] = 0;
+    }
     key_t newkey = ftok("client.c", 'S');
     int shmid = shmget(newkey, sizeof(int), 0666);
     if (shmid == -1)
@@ -138,9 +116,6 @@ void *DFS(void *fileName)
     }
     int* startVer = malloc(sizeof(int*));
     *startVer = (*sharedData) -1;
-
-    printf("Data read from shared memory: %d\n",*startVer );
-    printf("yo");
     if (shmdt(sharedData) == -1)
     {
         perror("Error detaching from shared memory");
@@ -148,7 +123,6 @@ void *DFS(void *fileName)
     }
 
     FILE *file = fopen(fileName, "r");
-    printf("file opened");
     if (file == NULL)
     {
         perror("Error opening file");
@@ -165,75 +139,119 @@ void *DFS(void *fileName)
         }
     }
     fclose(file);
-    printf("file closed");
     
-
-    printf("%d\n",maxNodes);
-    for(int i = 0;i<maxNodes;i++){
-        for(int j = 0;j<maxNodes;j++){
-            printf("%d ",adjMatrix[i][j]);
-        }
-        printf("\n");
-    }
-
     pthread_t pid2;
-    pthread_create(&pid2, NULL, DFS2, startVer);
+    if (operation == 3) pthread_create(&pid2, NULL, DFS, startVer);
+    else if (operation == 4) pthread_create(&pid2, NULL, BFS, startVer);
     pthread_join(pid2, NULL);
-    printf("output done");
+    message writeMessage;
+    writeMessage.mtype = atoi(sequenceNumber) + 1000;
+    strcpy(writeMessage.mtext, result);
+    if (msgsnd(msqid, &writeMessage, sizeof(writeMessage.mtext), 0) == -1)
+    {
+        perror("Error sending message to the client");
+        exit(EXIT_FAILURE);
+    }
+    result[0] = '\0';
     pthread_exit(NULL);
 }
 
-// void * DFS2(void * arg) {
-//     ThreadInfo *info = (ThreadInfo *)malloc(sizeof(ThreadInfo));
-//     int flag = 1;
-//     int i = *((int*)arg);
-//     free(arg);
-//     for (int j = i + 1; j < maxNodes; ++j)
-//     {
-//         if (adjMatrix[i][j])
-//         {
-//             flag = 0;
-
-//             int *start = malloc(sizeof(*start));
-//             *start = j;
-//             pthread_create(&info->tid, NULL, DFS2, start);
-//             pthread_join(info->tid, NULL);
-//         }
-//     }
-//     if (flag == 1)
-//     {
-//         printf("%d ", i + 1);
-//     }
-//     free(info);
-//     pthread_exit(NULL);
-// }
-
-void *DFS2(void *arg) {
+void *DFS(void *arg) {
     int i = *((int *)arg);
     free(arg);
 
     ThreadInfo *info = (ThreadInfo *)malloc(sizeof(ThreadInfo));
     int flag = 1;
+    visited[i] = 1;
 
-    for (int j = i + 1; j < maxNodes; ++j) {
-        if (adjMatrix[i][j]) {
+    for (int j = 0; j < maxNodes; ++j) {
+        if (adjMatrix[i][j] && !visited[j]) {
             flag = 0;
 
             int *start = malloc(sizeof(*start));
             *start = j;
 
-            pthread_create(&info->tid, NULL, DFS2, start);
+            pthread_create(&info->tid, NULL, DFS, start);
             pthread_join(info->tid, NULL);
-
-            
         }
     }
     if (flag == 1) {
-        printf("%d ", i + 1);
         char temp[30];
         sprintf(temp, "%d ", i + 1);
         strcat(result, temp);
     }
     free(info);
+    
+    pthread_exit(NULL);
+}
+void enqueue(int data) {
+    if(front == -1){
+        front = 0;
+    }
+    queue[rear+1] = data;
+    rear++;
+}
+void dequeue(){
+    if(front == -1){
+        printf("Queue is empty");
+    }
+    else{
+        front++;
+    }
+}
+int queuesize(){
+    for(int i=0; i<MAX_SIZE; i++){
+        if(queue[i] == -1){
+            return i;
+        }
+    }
+    return MAX_SIZE;
+}
+void *BFS(void *arg) {
+    int i = *((int *)arg);
+    free(arg);
+    
+
+    for(int j=0; j<MAX_SIZE; j++){
+        queue[j] = -1;
+        visited[j] = 0;
+    }
+    enqueue(i);
+    while(queue[front] != -1) {
+        for(int j = front; j <= rear; j++) {
+            ThreadInfo *info = (ThreadInfo *)malloc(sizeof(ThreadInfo));
+            int *vertex = malloc(sizeof(*vertex));
+            *vertex = queue[j];
+            pthread_create(&info->tid, NULL, threadfunc, vertex);
+            pthread_join(info->tid, NULL);
+            free(info);
+        }
+    }
+    for(int i=0; i<queuesize(); i++){
+        char temp[30];
+        sprintf(temp, "%d ", queue[i]+1);
+        strcat(result, temp);
+    }
+    front = -1;
+    rear = -1;
+    for(int j=0; j<MAX_SIZE; j++){
+        queue[j] = -1;
+        visited[j] = 0;
+    }
+    pthread_exit(NULL);
+}
+
+void *threadfunc(void *arg){
+    int i = *((int *)arg);
+    free(arg);
+    for(int k=0; k<maxNodes; k++){
+        if(adjMatrix[i][k]==1){
+            if(visited[k]==0){
+                 enqueue(k);
+            }
+        }
+    }
+    dequeue();
+    visited[i] = 1;
     pthread_exit(NULL);
 }
